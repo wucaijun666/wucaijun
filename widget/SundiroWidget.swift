@@ -11,7 +11,6 @@ import WidgetKit
 import SwiftUI
 import Foundation
 import Darwin
-import AppIntents
 
 // MARK: - Shared bridge state -------------------------------------------------
 
@@ -107,30 +106,6 @@ struct VehicleStatus {
 struct SundiroEntry: TimelineEntry {
     let date: Date
     let status: VehicleStatus
-    /// ★ 新增：来自小组件配置项（长按 → 编辑小组件 → 显示模式）
-    var mode: SundiroDetailMode = .simple
-}
-
-// MARK: - 小组件配置项（长按锁屏组件 → 编辑小组件） -----------------------------
-
-/// 显示模式：简洁（默认） / 详细信息（胎压 / 油量 / 电量）
-enum SundiroDetailMode: String, AppEnum {
-    case simple
-    case detailed
-
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "显示模式")
-    static var caseDisplayRepresentations: [SundiroDetailMode: DisplayRepresentation] = [
-        .simple:   DisplayRepresentation(title: "简洁", subtitle: "油量 / 胎压 / 里程"),
-        .detailed: DisplayRepresentation(title: "详细信息", subtitle: "胎压 / 油量 / 电量"),
-    ]
-}
-
-struct SundiroOptions: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource = "显示模式"
-    static var description = IntentDescription("选择锁屏矩形配件显示的内容")
-
-    @Parameter(title: "内容", default: .simple)
-    var mode: SundiroDetailMode
 }
 
 // MARK: - Tiny sync HTTP ------------------------------------------------------
@@ -295,13 +270,13 @@ private func fetchStatus() -> VehicleStatus {
 
 // MARK: - Timeline ------------------------------------------------------------
 
-struct SundiroProvider: AppIntentTimelineProvider {
+struct SundiroProvider: TimelineProvider {
     // MARK: - 存活标记（诊断用）-------------------------------------------------
 
 private func markAlive(_ site: String) {
     let fm = FileManager.default
     guard let dir = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.carbit.edrive.honda") else { return }
-    let text = "\(Date().timeIntervalSince1970) \(site) v5-config"
+    let text = "\(Date().timeIntervalSince1970) \(site) v51-static"
     try? text.write(to: dir.appendingPathComponent("widget_alive.txt"),
                     atomically: true, encoding: .utf8)
 }
@@ -313,19 +288,22 @@ func placeholder(in context: Context) -> SundiroEntry {
         return SundiroEntry(date: Date(), status: st)
     }
 
-    func snapshot(for configuration: SundiroOptions, in context: Context) async -> SundiroEntry {
-        markAlive("snapshot")
-        if context.isPreview { return placeholder(in: context) }
-        return SundiroEntry(date: Date(), status: fetchStatus(), mode: configuration.mode)
+    func getSnapshot(in context: Context, completion: @escaping (SundiroEntry) -> Void) {
+        markAlive("getSnapshot")
+        if context.isPreview {
+            completion(placeholder(in: context))
+        } else {
+            completion(SundiroEntry(date: Date(), status: fetchStatus()))
+        }
     }
 
-    func timeline(for configuration: SundiroOptions, in context: Context) async -> Timeline<SundiroEntry> {
-        markAlive("timeline")
+    func getTimeline(in context: Context, completion: @escaping (Timeline<SundiroEntry>) -> Void) {
+        markAlive("getTimeline")
         // ★ 先跑启动守护：系统每次来刷新时间线，都是一次「把主 App 拉起来」的机会。
         //   重启+解锁后、以及日常刷新时都会走到这里。
-        let entry = SundiroEntry(date: Date(), status: fetchStatus(), mode: configuration.mode)
+        let entry = SundiroEntry(date: Date(), status: fetchStatus())
         let refresh = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(900)
-        return Timeline(entries: [entry], policy: .after(refresh))
+        completion(Timeline(entries: [entry], policy: .after(refresh)))
     }
 }
 
@@ -870,7 +848,6 @@ private struct AccessoryRow: View {
 @available(iOS 16.0, *)
 struct SundiroAccessoryRectangularView: View {
     let s: VehicleStatus
-    var mode: SundiroDetailMode = .simple
 
     var body: some View {
         Group {
@@ -883,36 +860,19 @@ struct SundiroAccessoryRectangularView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 3) {
-                    if mode == .detailed {
-                        // ★ 详细信息：胎压 / 油量 / 电量（长按组件可切）
-                        AccessoryRow(label: "胎压", value: tirePairText, unit: "kPa")
-                        Divider()
-                        AccessoryRow(label: "油量",
-                                     value: s.fuel.map { "\($0)" } ?? "—",
-                                     unit: "%",
-                                     secondary: s.fuelLiters.flatMap { l in
-                                         s.fuelCapL.map { String(format: "%.1f/%.0fL", l, $0) }
-                                     })
-                        Divider()
-                        AccessoryRow(label: "电量",
-                                     value: s.batVolt.map { String(format: "%.1f", $0) } ?? "—",
-                                     unit: "V")
-                    } else {
-                        AccessoryRow(label: "油量",
-                                     value: s.fuel.map { "\($0)" } ?? "—",
-                                     unit: "%",
-                                     secondary: s.fuelLiters.flatMap { l in
-                                         s.fuelCapL.map { String(format: "%.1f/%.0fL", l, $0) }
-                                     })
-                        Divider()
-                        AccessoryRow(label: "胎压",
-                                     value: tirePairText,
-                                     unit: "kPa")
-                        Divider()
-                        AccessoryRow(label: "里程",
-                                     value: s.odo.map { String(format: "%.0f", $0) } ?? "—",
-                                     unit: "km")
-                    }
+                    // ★ 详细信息（固定布局）：胎压 / 油量 / 电量
+                    AccessoryRow(label: "胎压", value: tirePairText, unit: "kPa")
+                    Divider()
+                    AccessoryRow(label: "油量",
+                                 value: s.fuel.map { "\($0)" } ?? "—",
+                                 unit: "%",
+                                 secondary: s.fuelLiters.flatMap { l in
+                                     s.fuelCapL.map { String(format: "%.1f/%.0fL", l, $0) }
+                                 })
+                    Divider()
+                    AccessoryRow(label: "电量",
+                                 value: s.batVolt.map { String(format: "%.1f", $0) } ?? "—",
+                                 unit: "V")
                 }
             }
         }
@@ -982,7 +942,7 @@ struct SundiroWidgetView: View {
         } else {
             Group {
                 if #available(iOS 16.0, *), family == .accessoryRectangular {
-                    SundiroAccessoryRectangularView(s: entry.status, mode: entry.mode)
+                    SundiroAccessoryRectangularView(s: entry.status)
                 } else if family == .systemMedium {
                     SundiroMediumView(s: entry.status)
                 } else {
@@ -1013,8 +973,7 @@ struct SundiroWidget: Widget {
     }
 
     var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: kind, intent: SundiroOptions.self,
-                               provider: SundiroProvider()) { entry in
+        StaticConfiguration(kind: kind, provider: SundiroProvider()) { entry in
             SundiroWidgetView(entry: entry)
         }
         .configurationDisplayName("新大洲本田 无感管家")
