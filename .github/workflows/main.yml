@@ -11,9 +11,11 @@ jobs:
           ./widget/build_appex.sh "$RUNNER_TEMP/out"
           PL="$RUNNER_TEMP/out/SundiroWidget.appex/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(date -u +%Y%m%d%H%M)" "$PL"
-          codesign -f -s - --entitlements widget/SundiroWidget.entitlements --generate-entitlement-der "$RUNNER_TEMP/out/SundiroWidget.appex"
           rm -rf "$RUNNER_TEMP/out/SundiroWidget.appex/_CodeSignature"
+          rm -f "$RUNNER_TEMP/out/SundiroWidget.appex.zip"
+          ( cd "$RUNNER_TEMP/out" && /usr/bin/zip -qry SundiroWidget.appex.zip SundiroWidget.appex )
       - uses: actions/upload-artifact@v4
         with:
           name: SundiroWidget.appex
-          path: $RUNNER_TEMP/out/SundiroWidget.appex
+          path: ${{ runner.temp }}/out/SundiroWidget.appex.zip
+          if-no-files-found: error
